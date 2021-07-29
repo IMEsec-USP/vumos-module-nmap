@@ -100,7 +100,7 @@ def task(service: ScheduledVumosService, _: None = None):
     nmap = PortScannerAsync()
 
     nmap.scan(hosts=ip_ranges,
-              arguments=service.get_config('flags'), callback=on_host_result, sudo=True)
+              arguments=service.get_config('flags'), callback=on_host_result)
 
     # Wait for scan finish
     while nmap.still_scanning():
@@ -138,7 +138,7 @@ service = ScheduledVumosService(
             "key": "ip_ranges",
             "value": {
                 "type": "string",
-                "default": "10.10.0.0/24"  # "10.10.10.0/24, 192.168.15.0/24"
+                "default": "0.0.0.0/32"
             }
         }],
     pool_interval=3600 * 24 * 7)
