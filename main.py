@@ -1,32 +1,29 @@
 import asyncio
-from queue import Empty, Queue
-from subprocess import call
-from sys import flags
-import threading
-import time
-import json
+from queue import Queue
+from multiprocessing import Manager
 
-from nmap.nmap import PortScannerAsync
+from nmap.nmap import PortScanner, PortScannerAsync
 from common.messaging.vumos import ScheduledVumosService
 
 loop = asyncio.get_event_loop()
 
 
-def task(service: ScheduledVumosService, _: None = None):
+async def task(service: ScheduledVumosService, _: None = None):
     print("Start Scanning")
 
     # Calculate ip address list
     ip_ranges: str = service.get_config('ip_ranges')
     ip_ranges = ip_ranges.replace(',', ' ')
 
+    targets = Manager().Queue()
+    services = Manager().Queue()
+
     # Result processor function
     def on_host_result(host, result):
-        print(f"Hey [{host}]")
         if not result:
             return
 
         scan = result["scan"]
-        print(json.dumps(scan, indent=2))
 
         # Send data
         if len(scan.keys()) > 0:
@@ -56,8 +53,7 @@ def task(service: ScheduledVumosService, _: None = None):
                 if not key in parsed_keys:
                     extra[key] = scan[key]
 
-            loop.run_until_complete(service.send_target_data(
-                host, domains, extra=extra))
+            targets.put((host, domains, extra))
 
             # Notify found services
             tcp = {}
@@ -76,13 +72,13 @@ def task(service: ScheduledVumosService, _: None = None):
                 if 'extrainfo' in found:
                     name += f" {found['extrainfo']}"
 
-                loop.run_until_complete(service.send_service_data(
+                services.put((
                     host,
                     port,
-                    name=name,
-                    protocol=found['name'],
-                    version=found['version'],
-                    extra={
+                    name,
+                    found['name'],
+                    found['version'],
+                    {
                         "nmap": {
                             "state": found['state'],
                             "reason": found['reason'],
@@ -91,10 +87,6 @@ def task(service: ScheduledVumosService, _: None = None):
                         }
                     }
                 ))
-            pass
-        # Set status
-        # service.set_status(VumosServiceStatus(
-        #    'running', f"Scanning... done {len (targets) - done}/{len(targets)} targets"))
 
     # Create nmap instance and run scan
     nmap = PortScannerAsync()
@@ -102,9 +94,19 @@ def task(service: ScheduledVumosService, _: None = None):
     nmap.scan(hosts=ip_ranges,
               arguments=service.get_config('flags'), callback=on_host_result)
 
+    print("Waiting")
+
     # Wait for scan finish
-    while nmap.still_scanning():
-        time.sleep(5)
+    while nmap.still_scanning() or (not targets.empty()) or (not services.empty()):
+        while not targets.empty():
+            await service.send_target_data(*targets.get())
+            await asyncio.sleep(0.5)
+
+        while not services.empty():
+            await service.send_service_data(*services.get())
+            await asyncio.sleep(0.5)
+
+        await asyncio.sleep(1)
 
     print(f"Finished Scanning")
 
@@ -138,10 +140,10 @@ service = ScheduledVumosService(
             "key": "ip_ranges",
             "value": {
                 "type": "string",
-                "default": "0.0.0.0/32"
+                "default": "10.10.10.10"
             }
         }],
     pool_interval=3600 * 24 * 7)
 
 loop.run_until_complete(service.connect(loop))
-loop.run_until_complete(service.loop())
+service.loop(loop)
