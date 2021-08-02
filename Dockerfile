@@ -20,4 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Create volume for persistent information
+VOLUME [ "/usr/src/app/persistent" ]
+
 CMD [ "python", "-u", "main.py" ]
