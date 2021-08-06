@@ -1,19 +1,17 @@
 import asyncio
 from queue import Queue
 from multiprocessing import Manager
+from typing import Dict
 
-from nmap.nmap import PortScanner, PortScannerAsync
-from common.messaging.vumos import ScheduledVumosService
+from nmap.nmap import PortScannerAsync
+from common.messaging.vumos import ScheduledVumosService, VumosService
 
 loop = asyncio.get_event_loop()
 
 
-async def task(service: ScheduledVumosService, _: None = None):
-    print("Start Scanning")
-
+async def perform_scan(service: VumosService, flags: str, ranges: str):
     # Calculate ip address list
-    ip_ranges: str = service.get_config('ip_ranges')
-    ip_ranges = ip_ranges.replace(',', ' ')
+    ip_ranges = ranges.replace(',', ' ')
 
     targets = Manager().Queue()
     services = Manager().Queue()
@@ -92,9 +90,7 @@ async def task(service: ScheduledVumosService, _: None = None):
     nmap = PortScannerAsync()
 
     nmap.scan(hosts=ip_ranges,
-              arguments=service.get_config('flags'), callback=on_host_result)
-
-    print("Waiting")
+              arguments=flags, callback=on_host_result)
 
     # Wait for scan finish
     while nmap.still_scanning() or (not targets.empty()) or (not services.empty()):
@@ -108,8 +104,15 @@ async def task(service: ScheduledVumosService, _: None = None):
 
         await asyncio.sleep(1)
 
+
+async def task(service: ScheduledVumosService, _: None = None):
+    print("Start Scanning")
+    await perform_scan(service, service.get_config('flags'), service.get_config('ip_ranges'))
     print(f"Finished Scanning")
 
+
+async def scan_range(service: ScheduledVumosService, arguments: Dict):
+    await perform_scan(service, arguments['flags'], arguments['ip_ranges'])
 
 # Initialize Vumos service
 service = ScheduledVumosService(
@@ -143,7 +146,36 @@ service = ScheduledVumosService(
                 "default": "10.10.10.10"
             }
         }],
+    actions=[
+        {
+            "name": "Scan range",
+            "description": "Pontually scans an ip range given",
+            "arguments": [
+                {
+                    "name": "Flags",
+                    "description": "Flags to be used when scanning",
+                    "key": "flags",
+                    "value": {
+                        "type": "string",
+                        "default": "-A -f"
+                    }
+                },
+                {
+                    "name": "IP Ranges",
+                    "description": "The IP ranges to be scanned",
+                    "key": "ip_ranges",
+                    "value": {
+                        "type": "string"
+                    }
+                }
+            ],
+            "key": "scan_range",
+        }
+    ],
     pool_interval=3600 * 24 * 7)
+
+
+service.on_action("scan_range", scan_range)
 
 loop.run_until_complete(service.connect(loop))
 service.loop(loop)
