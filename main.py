@@ -43,7 +43,7 @@ async def perform_scan(service: VumosService, flags: str, ranges: str):
 
             for hostname in hostnames:
                 if hostname['name'] != "":
-                    domains.append(hostname)
+                    domains.append(hostname['name'])
 
             extra = {}
 
